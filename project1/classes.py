@@ -99,7 +99,8 @@ class Configurations:
         self.eigenvalues = eigh(self.hamiltonian, self.overlap, eigvals_only=True)
         self.energy_gs = (self.eigenvalues[0] - 1) * self.Z**2 / self.eta**2
         if verb:
-            print("E = {:.6f}     x     E_ref = {:.6f}  ,  delta = {:.7f}".format(self.energy_gs, self.eng_ref[self.n12], self.eng_ref[self.n12] - self.energy_gs))
+            print("\nResults:  E = {:.6f} ,  eta = {:.5f} ".format(self.energy_gs, self.eta))
+            print("Reference optimized values from the book:   E_ref = {:.6f}  ,  eta_ref = {:.5f}  ,  dE = {:.7f}".format(self.eng_ref[self.n12], self.eta_ref[self.n12], self.eng_ref[self.n12] - self.energy_gs))
         
         return self.energy_gs
     
