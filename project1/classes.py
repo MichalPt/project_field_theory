@@ -11,7 +11,6 @@ class Config:
         self.n2 = n2
         self.l = l
         self.x_repre = {1:MState(n1, l), 2:MState(n2,l)}
-        #print("State:", self.get_numbers())
         
     def get_numbers(self):
         return [self.n1, self. n2, self.l]
@@ -61,34 +60,50 @@ class Configurations:
                     
         print("States:", [x.get_numbers() for x in self.configs])
         print("\nTotal number of states:", self.N)
-        
+
     def build_hamiltonian_matrix(self, silent=True):
         hamiltonian = np.zeros([len(self.configs)]*2)
+        hamiltonian0 = np.zeros([len(self.configs)]*2)
+        hamiltonianW = np.zeros([len(self.configs)]*2)
+        if self.overlap is None:
+            self.build_overlap_matrix()
         
         with capture_output() as captured:
             for i1, c1 in enumerate(self.configs):
                 for i2, c2 in enumerate(self.configs):
                     print("\n<{}|...|{}>  ...........\n".format(c1.get_numbers(), c2.get_numbers()))
-                    E1 = one_particle_integral(*c1.get_numbers(), *c2.get_numbers(), eta=self.eta, particle=1) + one_particle_integral(*c1.get_numbers(), *c2.get_numbers(), eta=self.eta, particle=2)
+                    sign = 1
+                    NC1 = c1.get_numbers()
+                    NC2 = c2.get_numbers()
+                    revNC1 = [NC1[i] for i in [1,0,2]]
+                    revNC2 = [NC2[i] for i in [1,0,2]]
+                    one = one_particle_integral
+                    
+                    E1 = one(*NC1, *NC2, eta=self.eta, particle=1) + one(*NC1, *NC2, eta=self.eta, particle=2) + one(*revNC1, *revNC2, eta=self.eta, particle=1) + one(*revNC1, *revNC2, eta=self.eta, particle=2) + sign * (one(*NC1, *revNC2, eta=self.eta, particle=1) + one(*NC1, *revNC2, eta=self.eta, particle=2) + one(*revNC1, *NC2, eta=self.eta, particle=1) + one(*revNC1, *NC2, eta=self.eta, particle=2))
+                    
                     E2c = two_particle_integral(*c1.get_numbers(), *c2.get_numbers(), eta=self.eta, Z=self.Z, typ='c', silent=silent) 
                     E2e = two_particle_integral(*c1.get_numbers(), *c2.get_numbers(), eta=self.eta, Z=self.Z, typ='e', silent=silent)
-                    Etotal = E1 + (E2c + E2e)/2
-                    hamiltonian[i1,i2] = Etotal
+                    
+                    hamiltonian0[i1,i2] = E1 / 4
+                    hamiltonianW[i1,i2] = (E2c + E2e)/2
 
-                    print("\n >>>  E1 = {:.5f}   E2c = {:.5f}  E2e = {:.5f}  ...  E = {:.6f}\n".format(*[float(eng) for eng in [E1,E2c,E2e,Etotal]]))
+                    #print("\n >>>  E1 = {:.5f}   E2c = {:.5f}  E2e = {:.5f}  ...  E = {:.6f}\n".format(*[float(eng) for eng in [E1,E2c,E2e,Etotal]]))
                     
         if not silent:
             print(captured)
-        
-        self.hamiltonian = hamiltonian
+        print("ETA: {}".format(self.eta))
+        ham0 = hamiltonian0 - self.overlap
+        self.hamiltonian0 = ham0
+        self.hamiltonianW = hamiltonianW
+        self.hamiltonian = self.hamiltonian0 + self.hamiltonianW
         
     def build_overlap_matrix(self):
         S = np.zeros([len(self.configs)]*2)
         
         for i1, c1 in enumerate(self.configs):
             for i2, c2 in enumerate(self.configs):
-                S[i1,i2] = overlap(*c1.get_numbers(), *c2.get_numbers())
-        self.overlap = S
+                S[i1,i2] = overlap(*c1.get_numbers(), *c2.get_numbers()) + overlap(*c1.get_numbers(), *[c2.get_numbers()[i] for i in [1,0,2]])
+        self.overlap = S / 2
                           
     def get_energy(self, verb=True):
         if self.hamiltonian is None:
@@ -96,25 +111,31 @@ class Configurations:
         if self.overlap is None:
             self.build_overlap_matrix()
         
-        self.eigenvalues = eigh(self.hamiltonian, self.overlap, eigvals_only=True)
-        self.energy_gs = (self.eigenvalues[0] - 1) * self.Z**2 / self.eta**2
+        #self.hamiltonian = self.hamiltonian0 + self.hamiltonianW
+        #self.eigenvalues = eigh(self.hamiltonian, self.overlap, eigvals_only=True)
+        #self.energy_gs = (self.eigenvalues[0] - 1) * self.Z**2 / self.eta**2
+        
+        self.hamiltonian = self.hamiltonian0 + self.hamiltonianW
+        self.eigenvalues = eigh(self.hamiltonian * self.Z**2 / self.eta**2, self.overlap, eigvals_only=True)
+        self.energy_gs = self.eigenvalues[0] 
+        
         if verb:
             print("\nResults:  E = {:.6f} ,  eta = {:.5f} ".format(self.energy_gs, self.eta))
             print("Reference optimized values from the book:   E_ref = {:.6f}  ,  eta_ref = {:.5f}  ,  dE = {:.7f}".format(self.eng_ref[self.n12], self.eta_ref[self.n12], self.eng_ref[self.n12] - self.energy_gs))
         
         return self.energy_gs
     
-    def optimize_eta(self,silent=True):
+    def optimize_eta(self, silent=True):
         def get_E(eta, obj):
             obj.eta = eta
-            self.build_hamiltonian_matrix()
-            self.build_overlap_matrix()
-            self.eigenvalues = eigh(self.hamiltonian, self.overlap, eigvals_only=True)
-            self.energy_gs = (self.eigenvalues[0] - 1) * self.Z**2 / self.eta**2
-            return self.energy_gs
+            obj.build_hamiltonian_matrix()
+            obj.build_overlap_matrix()
+            obj.eigenvalues = eigh(obj.hamiltonian * obj.Z**2 / obj.eta**2, obj.overlap, eigvals_only=True)
+            obj.energy_gs = obj.eigenvalues[0]
+            return obj.energy_gs
         
         with capture_output() as captured:
-            results = minimize_scalar(get_E, args=(self),bracket=(0.5,1.0,2.0))
+            results = minimize_scalar(get_E, args=(self),bracket=(0.5,1.0,1.5))
             eta_opt = results['x']
             E_opt = results['fun']
             
@@ -149,12 +170,13 @@ class State:
         
     def __call__(self, variable, alpha, c0=0, c1=0):
         if self.n==1 and self.l==0:
-            return 2*sqrt(alpha**3) * exp(-alpha*variable)
+            return 2*sqrt(alpha**3) * exp(-alpha*variable)                                        # pp. 149
         elif self.n==2 and self.l==1:
-            return sqrt(alpha**5 / factorial(4)) * variable * exp(-alpha * variable / 2)
+            return sqrt(alpha**5 / factorial(4)) * variable * exp(-alpha * variable / 2)          # pp. 150
         elif self.n==3 and self.l==2:
-            return sqrt((2*alpha/3)**7 /factorial(6)) * variable**2 * exp(-alpha*variable / 3)
+            return sqrt((2*alpha/3)**7 /factorial(6)) * variable**2 * exp(-alpha*variable / 3)    # pp. 157, úkol 14
         elif self.n==2 and self.l==0:
             c0 = sqrt(2) * alpha**(3/2) / 2
             c1 = - sqrt(2) * alpha**(5/2) / 4
-            return (c0 + c1 * variable) * exp(- alpha * variable / 2)
+            return (c0 + c1 * variable) * exp(- alpha * variable / 2)                             # pp. 157, úkol 15
+        
